@@ -26,17 +26,28 @@ class GateResult:
     reasons: list[str]  # why it failed (empty if passed)
 
 
-def hard_gate(rec: BusinessRecord, cfg: Config) -> GateResult:
+def hard_gate(
+    rec: BusinessRecord,
+    cfg: Config,
+    require_revenue: bool = True,
+    require_years: bool = True,
+) -> GateResult:
+    """Section 2 hard gate. `require_revenue`/`require_years` can be relaxed
+    when those signals are unavailable (e.g. Places-only runs where ABN Lookup
+    and Apollo enrichment aren't reachable): a missing value then passes with a
+    flag instead of disqualifying, but an out-of-band KNOWN value still fails."""
     reasons: list[str] = []
 
     rev = rec._monthly_revenue_estimate
     if rev is None:
-        reasons.append("no revenue estimate")
+        if require_revenue:
+            reasons.append("no revenue estimate")
     elif not (cfg.revenue_min_monthly_aud <= rev <= cfg.revenue_max_monthly_aud):
         reasons.append(f"revenue {rev:.0f}/mo outside band")
 
     if rec.years_in_business is None:
-        reasons.append("no years-in-business")
+        if require_years:
+            reasons.append("no years-in-business")
     elif rec.years_in_business < cfg.min_years_in_business:
         reasons.append(f"only {rec.years_in_business}y trading")
 
@@ -78,6 +89,21 @@ def _revenue_fit_score(monthly: float | None, cfg: Config, band: float = 15.0) -
     return round(band * math.exp(-0.5 * z * z), 2)
 
 
+def _scale_fit_score(reviews: int | None, band: float = 15.0) -> float:
+    """Places-only stand-in for revenue-fit when no revenue is available.
+    Review count is the only scale signal Places gives; the brief wants
+    established-but-not-enterprise, so we peak on a log-review sweet spot and
+    demote BOTH tiny shops (too small) and 1000+-review national franchises
+    (above the revenue ceiling). Peak ~120 reviews, edges near ~15 and ~1000.
+    PROXY — replace with real revenue-fit once revenue is enriched."""
+    if not reviews or reviews <= 0:
+        return 0.0
+    peak_log = math.log(120)
+    sigma = math.log(9)  # ~15 and ~950 reviews sit ~1.5 sigma from the peak
+    z = (math.log(reviews) - peak_log) / sigma
+    return round(band * math.exp(-0.5 * z * z), 2)
+
+
 def _reachability_score(rec: BusinessRecord, band: float = 10.0) -> float:
     conf_base = {"high": 0.7, "medium": 0.45, "low": 0.15}.get(rec.data_confidence, 0.15)
     verified = sum(bool(getattr(rec, f)) for f in (
@@ -104,10 +130,15 @@ def _is_vic_metro(rec: BusinessRecord, cfg: Config) -> bool:
 
 def priority_score(rec: BusinessRecord, cfg: Config) -> float:
     """Assumes rec passed the hard gate and rec.seasonal_pain_score is set."""
+    # Revenue-fit when we have a revenue estimate; otherwise the review-based
+    # scale-fit proxy (Places-only runs).
+    fit = (_revenue_fit_score(rec._monthly_revenue_estimate, cfg)
+           if rec._monthly_revenue_estimate is not None
+           else _scale_fit_score(rec.google_review_count))
     total = (
         (rec.seasonal_pain_score or 0.0)
         + _customer_base_score(rec.estimated_customer_base, cfg)
-        + _revenue_fit_score(rec._monthly_revenue_estimate, cfg)
+        + fit
         + _reachability_score(rec)
         + _longevity_bonus(rec.years_in_business)
     )

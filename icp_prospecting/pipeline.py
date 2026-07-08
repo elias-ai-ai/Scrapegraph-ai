@@ -78,20 +78,26 @@ def score_and_rank(
     records: list[BusinessRecord],
     seasonality: dict[str, SeasonalityResult],
     cfg: Config,
+    require_revenue: bool = True,
+    require_years: bool = True,
 ) -> tuple[list[BusinessRecord], RunSummary]:
     """Full run: dedupe -> hard gate -> apply seasonality -> confidence ->
-    priority score -> sort. Returns (ranked_passing_records, summary)."""
+    priority score -> sort. Returns (ranked_passing_records, summary).
+
+    require_revenue/require_years relax the gate for Places-only runs where
+    those signals can't be fetched (see scoring.hard_gate)."""
     deduped, removed = dedupe(records)
 
     passing: list[BusinessRecord] = []
-    by_vertical: dict[str, int] = defaultdict(int)
-    by_state: dict[str, int] = defaultdict(int)
-    conf_counts: dict[str, int] = defaultdict(int)
-
     for rec in deduped:
-        gate = hard_gate(rec, cfg)
+        gate = hard_gate(rec, cfg, require_revenue, require_years)
         if not gate.passed:
             continue
+        # Note which gate fields are unverified so the CSV is honest.
+        if rec._monthly_revenue_estimate is None:
+            _append_note(rec, "revenue UNVERIFIED (Apollo/ABN not reachable)")
+        if rec.years_in_business is None:
+            _append_note(rec, "years UNVERIFIED (ABN not reachable)")
 
         sr = seasonality.get(rec.industry_vertical)
         if sr and sr.seasonal_pain_score is not None:
@@ -104,9 +110,6 @@ def score_and_rank(
 
         rec.data_confidence = assess_confidence(rec)
         rec.priority_score = priority_score(rec, cfg)
-        conf_counts[rec.data_confidence] += 1
-        by_vertical[rec.industry_vertical] += 1
-        by_state[rec.state or "UNKNOWN"] += 1
         passing.append(rec)
 
     # Sort: priority desc, but low-confidence records sink (Phase 6).
@@ -116,6 +119,15 @@ def score_and_rank(
         reverse=True,
     )
     passing = passing[: cfg.target_pool_size]
+
+    # Distributions computed on the FINAL list (not the full gate-passing set).
+    by_vertical: dict[str, int] = defaultdict(int)
+    by_state: dict[str, int] = defaultdict(int)
+    conf_counts: dict[str, int] = defaultdict(int)
+    for rec in passing:
+        by_vertical[rec.industry_vertical] += 1
+        by_state[rec.state or "UNKNOWN"] += 1
+        conf_counts[rec.data_confidence] += 1
 
     avg_pain = {
         vk: (sr.seasonal_pain_score if sr else None)

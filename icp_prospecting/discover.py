@@ -24,6 +24,11 @@ from .schema import BusinessRecord, dedupe
 from .pipeline import write_csv
 from .verticals import VERTICALS, BY_KEY
 
+# Australian states/territories — used to drop foreign homonyms (e.g. a
+# "Perth WA" query occasionally returns Perth, Scotland). Empty state is kept
+# (Places didn't return an admin area), foreign non-empty states are dropped.
+AU_STATES = {"VIC", "NSW", "QLD", "WA", "SA", "TAS", "ACT", "NT"}
+
 
 def discover(
     locations: list[str],
@@ -49,6 +54,9 @@ def discover(
                     places = data.get("places", [])
                     for p in places:
                         rec = places_result_to_record(p, v.key)
+                        st = (rec.state or "").strip().upper()
+                        if st and st not in AU_STATES:
+                            continue  # foreign homonym, e.g. Perth, Scotland
                         records.append(rec)
                         per_vertical_raw[v.key] += 1
                     if verbose:
