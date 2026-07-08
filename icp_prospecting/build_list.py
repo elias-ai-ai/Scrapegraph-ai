@@ -58,6 +58,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--locations", nargs="+")
     ap.add_argument("--from-candidates", help="re-score a cached candidates CSV (no Places calls)")
     ap.add_argument("--max-pages", type=int, default=1)
+    ap.add_argument("--provisional-seasonality", action="store_true",
+                    help="apply the PROVISIONAL AU winter table (assumption, not measured)")
     args = ap.parse_args(argv)
     cfg = DEFAULT
 
@@ -75,9 +77,17 @@ def main(argv: list[str] | None = None) -> int:
         print(f"  cached full pool -> candidates_full.csv "
               f"(re-score later with --from-candidates)")
 
-    print("\nPhase 6 — gate + score (revenue/years relaxed, seasonality unscored):")
+    seasonality = {}
+    if args.provisional_seasonality:
+        from .seasonality import provisional_pain_scores
+        from .verticals import VERTICALS
+        seasonality = {r.vertical_key: r for r in provisional_pain_scores(VERTICALS)}
+        print("\nApplying PROVISIONAL AU seasonality (assumption, not measured).")
+
+    label = "provisional seasonality" if seasonality else "seasonality unscored"
+    print(f"\nPhase 6 — gate + score (revenue/years relaxed, {label}):")
     ranked, summary = score_and_rank(
-        records, seasonality={}, cfg=cfg,
+        records, seasonality=seasonality, cfg=cfg,
         require_revenue=False, require_years=False)
 
     prospects = f"{args.out_dir}/prospects.csv"

@@ -78,6 +78,56 @@ def index_to_pain_score(seasonality_index: float, band: float = 40.0) -> float:
     return round(pain_fraction * band, 2)
 
 
+# ---------------------------------------------------------------------------
+# PROVISIONAL Australian (Southern-Hemisphere) seasonality — ASSUMPTION, NOT
+# MEASURED. Jul-Sep = AU winter/early spring. Values are the estimated
+# Jul-Sep-interest / full-year-interest ratio (lower = deeper winter trough =
+# more reactivation pain). These are domain-reasoned placeholders to give an
+# interim seasonal ranking; REPLACE with measured Google Trends indices
+# (fetch_seasonality_index) from a Trends-reachable environment. Flagged so no
+# one mistakes them for real data (Section 3 "measure, don't assume").
+# ---------------------------------------------------------------------------
+PROVISIONAL_AU_SEASONALITY: dict[str, float] = {
+    "marine_service": 0.50,    # boating is summer; deep winter trough
+    "pool_service": 0.55,      # pools idle in winter
+    "pressure_washing": 0.60,  # outdoor, spring/summer driven
+    "pest_control": 0.60,      # pests peak in warm months
+    "landscaping": 0.62,       # slow grass growth in winter
+    "solar_service": 0.70,     # cleaning/checks peak sunny months
+    "car_detailing": 0.75,     # dips in winter
+    "home_cleaning": 0.80,     # spring-cleaning peak; winter softer
+    "fitness": 0.85,           # Jan (summer) peak; winter low motivation
+    "pet_services": 0.85,      # boarding peaks summer holidays
+    "hair_beauty": 0.90,       # pre-event (spring/summer) peaks
+    "property_mgmt": 0.90,     # rental churn peaks summer
+    "hvac": 0.92,              # mixed: heating up, cooling-service down
+    "med_spa": 0.95,           # winter is treatment-prep season (fairly flat)
+    "electrical": 0.95,        # broadly aseasonal, slight winter dip
+    "allied_health": 0.97,     # aseasonal
+    "auto_repair": 0.97,       # aseasonal
+    "dental": 0.98,            # aseasonal
+    "tutoring": 1.00,          # Term 3 + mid-year exams: no winter trough
+    "plumbing": 1.05,          # winter burst pipes/hot-water: counter-seasonal
+}
+
+
+def provisional_pain_scores(verticals: tuple[Vertical, ...]) -> list[SeasonalityResult]:
+    """Build pain scores directly from PROVISIONAL_AU_SEASONALITY with no
+    network. Every result is tagged source='provisional' and carries the
+    'not measured' note."""
+    out: list[SeasonalityResult] = []
+    for v in verticals:
+        idx = PROVISIONAL_AU_SEASONALITY.get(v.key)
+        if idx is None:
+            out.append(SeasonalityResult(v.key, v.trends_keyword, None, None, 0,
+                                         "unavailable", "no provisional value"))
+        else:
+            out.append(SeasonalityResult(
+                v.key, v.trends_keyword, idx, index_to_pain_score(idx), 0,
+                "provisional", "PROVISIONAL AU winter estimate — not measured"))
+    return out
+
+
 def pain_scores(
     verticals: tuple[Vertical, ...],
     geo: str = "AU",
